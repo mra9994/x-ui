@@ -15,10 +15,12 @@ import (
 	"x-ui/xray"
 
 	"github.com/goccy/go-json"
+	
+	"bufio"
+	"os"
 )
 
 type SubService struct {
-	address     string
 	showInfo    bool
 	remarkModel string
 
@@ -33,7 +35,7 @@ func NewSubService(showInfo bool, remarkModel string) *SubService {
 }
 
 func (s *SubService) GetSubs(subId string, host string) ([]string, string, error) {
-	s.address = host
+	ips := getIps()
 	var result []string
 	var header string
 	var traffic xray.ClientTraffic
@@ -62,8 +64,9 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, string, error
 		}
 		for _, client := range clients {
 			if client.Enable && client.SubID == subId {
-				link := s.getLink(inbound, client.Email)
-				result = append(result, link)
+				for _, ip := range ips { 
+					result = append(result, s.getLink(inbound, client.Email, ip))
+				}
 				clientTraffics = append(clientTraffics, s.getClientTraffics(inbound.ClientStats, client.Email))
 			}
 		}
@@ -144,27 +147,27 @@ func (s *SubService) getFallbackMaster(dest string, streamSettings string) (stri
 	return inbound.Listen, inbound.Port, string(modifiedStream), nil
 }
 
-func (s *SubService) getLink(inbound *model.Inbound, email string) string {
+func (s *SubService) getLink(inbound *model.Inbound, email string, ip string) string {
 	switch inbound.Protocol {
 	case "vmess":
-		return s.genVmessLink(inbound, email)
+		return s.genVmessLink(inbound, email, ip)
 	case "vless":
-		return s.genVlessLink(inbound, email)
+		return s.genVlessLink(inbound, email, ip)
 	case "trojan":
-		return s.genTrojanLink(inbound, email)
+		return s.genTrojanLink(inbound, email, ip)
 	case "shadowsocks":
-		return s.genShadowsocksLink(inbound, email)
+		return s.genShadowsocksLink(inbound, email, ip)
 	}
 	return ""
 }
 
-func (s *SubService) genVmessLink(inbound *model.Inbound, email string) string {
+func (s *SubService) genVmessLink(inbound *model.Inbound, email string, ip string) string {
 	if inbound.Protocol != model.VMess {
 		return ""
 	}
 	obj := map[string]interface{}{
 		"v":    "2",
-		"add":  s.address,
+		"add":  ip,
 		"port": inbound.Port,
 		"type": "none",
 	}
@@ -286,8 +289,8 @@ func (s *SubService) genVmessLink(inbound *model.Inbound, email string) string {
 	return "vmess://" + base64.StdEncoding.EncodeToString(jsonStr)
 }
 
-func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
-	address := s.address
+func (s *SubService) genVlessLink(inbound *model.Inbound, email string, ip string) string {
+	address := ip
 	if inbound.Protocol != model.VLESS {
 		return ""
 	}
@@ -467,8 +470,8 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 	return url.String()
 }
 
-func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string {
-	address := s.address
+func (s *SubService) genTrojanLink(inbound *model.Inbound, email string, ip string) string {
+	address := ip
 	if inbound.Protocol != model.Trojan {
 		return ""
 	}
@@ -641,8 +644,8 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 	return url.String()
 }
 
-func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string) string {
-	address := s.address
+func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string, ip string) string {
+	address := ip
 	if inbound.Protocol != model.Shadowsocks {
 		return ""
 	}
@@ -873,22 +876,31 @@ func searchKey(data interface{}, key string) (interface{}, bool) {
 }
 
 func searchHost(headers interface{}) string {
-	data, _ := headers.(map[string]interface{})
-	for k, v := range data {
-		if strings.EqualFold(k, "host") {
-			switch v.(type) {
-			case []interface{}:
-				hosts, _ := v.([]interface{})
-				if len(hosts) > 0 {
-					return hosts[0].(string)
-				} else {
-					return ""
-				}
-			case interface{}:
-				return v.(string)
-			}
-		}
+	host := readLines("/etc/x-ui/host.txt"); 
+	return host[0]
+}
+
+func getIps() ([]string) {
+	return readLines("/etc/x-ui/ips.txt")
+}
+
+func readLines(filename string) ([]string) {
+	var lines []string
+	
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
 	}
 
-	return ""
+	if err := scanner.Err(); err != nil {
+		return nil
+	}
+
+	return lines
 }
